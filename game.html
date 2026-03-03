@@ -1,0 +1,1328 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>mjkMarchingCubes — Game</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0d1117; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; }
+  canvas { display: block; }
+
+  /* ── toolbar ── */
+  #toolbar {
+    position: absolute; top: 0; left: 0; right: 0; height: 44px;
+    background: rgba(22,27,34,0.92); border-bottom: 1px solid #30363d;
+    display: flex; align-items: center; gap: 10px; padding: 0 12px;
+    z-index: 20; flex-wrap: nowrap; overflow: hidden;
+  }
+  #toolbar h1 { font-size: 12px; color: #7fb3d3; white-space: nowrap; margin-right: 4px; }
+  .ctrl { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .ctrl label { font-size: 10px; color: #8b949e; }
+  .ctrl input[type=range] { width: 64px; accent-color: #58a6ff; }
+  .ctrl .val { font-size: 10px; color: #58a6ff; min-width: 22px; }
+  .sep { width: 1px; height: 22px; background: #30363d; flex-shrink: 0; }
+  button {
+    padding: 3px 8px; font-size: 10px; border-radius: 4px; cursor: pointer;
+    border: 1px solid #30363d; background: #21262d; color: #cdd9e5; white-space: nowrap;
+  }
+  button:hover { background: #30363d; }
+  button.active { background: #1f6feb; border-color: #58a6ff; color: #fff; }
+
+  /* ── HUD: HP bars ── */
+  #hud { position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; z-index: 10; }
+  .hp-bar {
+    position: absolute; display: flex; flex-direction: column; align-items: center;
+    gap: 1px; pointer-events: none; transform: translateX(-50%);
+  }
+  .hp-name { font-size: 9px; color: #e6edf3; text-shadow: 0 1px 2px #000; white-space: nowrap; }
+  .hp-track { width: 42px; height: 5px; background: #30363d; border-radius: 2px; overflow: hidden; }
+  .hp-fill { height: 100%; border-radius: 2px; transition: width 0.15s; }
+  .hp-player .hp-fill { background: #3fb950; }
+  .hp-enemy  .hp-fill { background: #f85149; }
+
+  /* ── combat log ── */
+  #combat-log {
+    position: absolute; bottom: 12px; right: 12px; width: 320px;
+    background: rgba(13,17,23,0.82); border: 1px solid #30363d; border-radius: 6px;
+    padding: 8px 10px; z-index: 15; pointer-events: none;
+  }
+  #combat-log h3 { font-size: 10px; color: #8b949e; text-transform: uppercase;
+    letter-spacing: .06em; margin-bottom: 6px; }
+  #log-content div { font-size: 11px; color: #cdd9e5; padding: 1px 0; line-height: 1.45;
+    border-bottom: 1px solid #21262d; }
+  #log-content div:last-child { border-bottom: none; }
+
+  /* ── pause overlay ── */
+  #pause-overlay {
+    position: absolute; inset: 0; display: none; z-index: 30;
+    background: rgba(0,0,0,0.45); backdrop-filter: blur(1px);
+    align-items: center; justify-content: center; flex-direction: column; gap: 8px;
+  }
+  #pause-overlay.visible { display: flex; }
+  #pause-overlay .big { font-size: 36px; color: #e6edf3; letter-spacing: .12em; }
+  #pause-overlay .hint { font-size: 12px; color: #8b949e; }
+
+  /* ── state label (debug) ── */
+  .state-label {
+    position: absolute; font-size: 8px; color: #ffd700; pointer-events: none;
+    transform: translateX(-50%); text-shadow: 0 1px 2px #000;
+  }
+  #debug-info {
+    position: absolute; bottom: 12px; left: 12px; font-size: 11px; color: #8b949e;
+    pointer-events: none; z-index: 10; background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 4px;
+  }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <h1>mjkMC Game</h1>
+  <div class="sep"></div>
+  <div class="ctrl">
+    <label>Slope</label>
+    <input type="range" id="sl-slope" min="0" max="3" value="1" step="1">
+    <span class="val" id="v-slope">1</span>
+  </div>
+  <div class="ctrl">
+    <label>Sight</label>
+    <input type="range" id="sl-sight" min="5" max="25" value="14" step="1">
+    <span class="val" id="v-sight">14</span>
+  </div>
+  <div class="ctrl">
+    <label>Speed</label>
+    <input type="range" id="sl-cspeed" min="25" max="400" value="100" step="25">
+    <span class="val" id="v-cspeed">1.0×</span>
+  </div>
+  <div class="ctrl">
+    <label>Scale</label>
+    <input type="range" id="sl-scale" min="5" max="50" value="20" step="1">
+    <span class="val" id="v-scale">2.0</span>
+  </div>
+  <div class="sep"></div>
+  <button id="btn-spawn">↺ Spawn</button>
+  <button id="btn-wire">Wireframe</button>
+  <button id="btn-debug">Debug</button>
+  <div class="sep"></div>
+  <span style="font-size:10px;color:#8b949e">Space: pause &nbsp;|&nbsp; R: camera &nbsp;|&nbsp; D: debug &nbsp;|&nbsp; W: wire</span>
+</div>
+
+<div id="hud"></div>
+
+<div id="combat-log">
+  <h3>Combat Log</h3>
+  <div id="log-content"></div>
+</div>
+
+<div id="pause-overlay">
+  <div class="big">⏸ PAUSED</div>
+  <div class="hint">Space to resume &nbsp;·&nbsp; D: debug overlay &nbsp;·&nbsp; W: wireframe &nbsp;·&nbsp; R: reset camera</div>
+</div>
+
+<div id="debug-info"></div>
+<div id="error-banner" style="display:none;position:absolute;top:50px;left:50%;transform:translateX(-50%);
+  background:#8b0000;color:#fff;padding:10px 20px;border-radius:6px;font-size:12px;
+  max-width:600px;text-align:center;z-index:50;pointer-events:none"></div>
+
+<!-- Step 0: plain JS to confirm HTML + basic JS works before module loads -->
+<script>
+(function() {
+  function dbg(s) {
+    var el = document.getElementById('debug-info');
+    if (el) el.textContent = s;
+  }
+  dbg('Step 0: HTML parsed, waiting for ES module...');
+  window.addEventListener('error', function(e) {
+    var el = document.getElementById('error-banner');
+    if (el) { el.textContent = 'JS error: ' + e.message + ' (' + e.filename + ':' + e.lineno + ')'; el.style.display = 'block'; }
+  }, true); // capture phase catches module errors
+})();
+</script>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls }  from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader }     from 'three/addons/loaders/GLTFLoader.js';
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+
+function dbg(s) {
+  const el = document.getElementById('debug-info');
+  if (el) el.textContent = s;
+  console.log('[game]', s);
+}
+function showError(msg) {
+  const el = document.getElementById('error-banner');
+  if (el) { el.textContent = msg; el.style.display = 'block'; }
+  console.error('[game-error]', msg);
+}
+window.addEventListener('unhandledrejection', e => showError('Unhandled rejection: ' + (e.reason?.message ?? e.reason)));
+
+dbg('Step 1: ES module imports resolved — THREE version ' + THREE.REVISION);
+
+// ============================================================
+// MAP DATA  (simplified — clear path between party and enemies)
+// ============================================================
+const mjkMap = [
+  ['x','x','x','x','x','x','x','x','x','x','x','x','x','c','c','x','x','x','x','x','x','x','x','x','x','x','x','x','x','x','x','x'],
+  ['x','_','_','_','_','_','_','_','_','_','_','_','o','c','c','o','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','x'],
+  ['x','_','_','_','_','_','_','_','_','_','_','_','_','c','c','o','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','x'],
+  ['x','_','_','_','_','_','_','_','_','_','_','_','_','b','b','o','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','x'],
+  ['x','x','x','x','x','x','x','x','x','x','x','_','_','a','a','o','x','x','x','x','x','_','_','x','x','x','x','x','_','_','x','x'],
+  ['x','_','_','_','_','_','_','x','_','_','_','_','_','a','a','o','x','x','_','_','x','_','_','_','_','_','_','_','_','_','_','x'],
+  ['x','_','_','_','_','_','_','x','_','_','_','_','_','_','_','_','x','x','_','_','x','_','_','_','_','_','_','_','_','_','_','x'],
+  ['x','_','_','_','_','_','_','x','_','_','_','_','_','_','_','_','_','x','_','_','x','_','_','_','_','_','_','_','_','_','_','x'],
+  ['x','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','x','_','_','_','_','_','_','_','_','_','_','x'],
+  ['x','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','x'],
+  ['x','_','_','_','_','_','_','x','_','_','_','_','_','_','_','_','_','_','_','_','x','_','_','_','_','_','_','_','_','_','_','x'],
+  ['x','x','x','x','x','x','x','x','x','_','_','_','_','_','_','_','_','_','_','x','x','x','x','x','x','_','_','_','x','x','x','x'],
+  ['x','_','_','x','_','_','_','x','x','_','_','_','_','_','_','_','_','_','_','x','x','_','_','_','_','_','_','_','_','_','_','x'],
+  ['x','_','_','x','_','_','_','_','_','x','_','_','_','_','_','_','_','_','x','_','_','_','_','_','_','_','_','_','_','_','_','x'],
+  ['x','_','_','_','_','_','_','_','_','_','x','_','_','_','_','_','_','x','_','_','_','_','a','a','_','_','_','_','_','_','_','x'],
+  ['x','_','_','_','_','_','_','_','_','_','_','x','x','_','_','x','x','x','b','b','b','c','a','a','c','_','_','_','_','b','b','x'],
+  ['x','_','_','x','_','_','_','_','_','_','_','x','x','_','_','x','o','o','_','_','_','_','a','a','_','_','_','_','_','_','_','x'],
+  ['x','_','_','x','x','_','_','_','_','_','_','_','x','_','_','x','o','o','_','_','_','_','_','_','_','_','_','_','_','_','_','x'],
+  ['x','_','_','x','_','_','_','_','_','_','_','_','_','_','_','_','o','o','_','_','_','_','_','_','x','_','_','_','_','_','_','x'],
+  ['x','_','_','x','_','_','_','_','_','_','_','_','_','_','_','o','o','o','_','_','_','_','_','_','x','x','_','_','_','_','_','x'],
+  ['x','_','_','_','_','_','_','_','_','_','_','_','_','_','a','B','B','B','A','_','_','_','_','x','_','_','_','_','x','_','_','x'],
+  ['x','_','_','_','_','_','_','_','_','_','_','_','_','_','a','B','B','B','A','_','_','_','x','_','_','_','_','_','x','_','_','x'],
+  ['x','_','_','_','_','_','_','_','_','_','_','_','_','_','a','B','B','B','A','_','_','x','_','_','_','_','_','_','_','x','_','x'],
+  ['x','_','_','_','_','_','_','_','_','_','_','_','_','_','_','o','o','o','o','_','x','_','_','_','_','_','_','_','_','_','x','x'],
+  ['x','_','_','_','_','_','_','_','_','_','_','_','_','_','_','o','o','o','o','_','x','_','_','_','_','_','_','_','_','_','x','x'],
+  ['x','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','o','o','_','_','x','_','_','_','_','_','_','_','_','_','_','x'],
+  ['x','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','x','x','x','_','_','_','_','_','_','_','_','_','_','_','x'],
+  ['x','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','x','_','_','_','_','_','x','_','_','_','_','_','_','_','x'],
+  ['x','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','x','x','x','_','_','_','_','_','_','x'],
+  ['x','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','x','_','_','_','x','_','_','_','x'],
+  ['x','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','x','_','_','_','x','_','x','_','x','_','x','_','_','_','x'],
+  ['x','x','x','x','x','x','x','x','x','x','x','x','x','x','x','x','x','x','x','x','x','x','x','x','x','x','x','x','x','x','x','x']
+];
+
+// ============================================================
+// MC CONSTANTS
+// ============================================================
+const SIZE       = 32;
+const AXIS_MIN   = 0;
+const AXIS_MAX   = 78;
+const AXIS_RANGE = AXIS_MAX - AXIS_MIN;
+const PIT_DEPTH  = 4;
+const TH         = 6;
+const ISOLEVEL   = 0;
+const SIZE2      = SIZE * SIZE;
+const VSTEP      = AXIS_RANGE / (SIZE - 1);   // ≈ 2.516 world units
+const FLOOR_SURFACE = 12.4;                    // measured MC mesh floor Y
+
+// ============================================================
+// BUILD SCALAR FIELD
+// ============================================================
+function buildScalarField() {
+  const points = new Array(SIZE * SIZE * SIZE);
+  const values = new Float32Array(SIZE * SIZE * SIZE);
+  for (let z = 0; z < SIZE; z++)
+  for (let y = 0; y < SIZE; y++)
+  for (let xi = 0; xi < SIZE; xi++) {
+    const idx = xi + y * SIZE + z * SIZE2;
+    points[idx] = [
+      AXIS_MIN + AXIS_RANGE * xi / (SIZE - 1),
+      AXIS_MIN + AXIS_RANGE * y  / (SIZE - 1),
+      AXIS_MIN + AXIS_RANGE * z  / (SIZE - 1)
+    ];
+    const sss = mjkMap[xi][z];
+    let val = -TH * 5;
+    if (sss === "x" && y < 4 + PIT_DEPTH) val = TH;
+    if (sss === "a" && y < 2 + PIT_DEPTH) val = TH;
+    if (sss === "b" && y < 3 + PIT_DEPTH) val = TH;
+    if (sss === "c" && y < 4 + PIT_DEPTH) val = TH;
+    if (y <= PIT_DEPTH) val = TH * 50;
+    if (sss === "A" || sss === "B" || sss === "C" || sss === "w") val = -TH * 5;
+    if (sss === "w" && y === 0 + PIT_DEPTH) val = TH * 50;
+    if (sss === "A" && y === 1 + PIT_DEPTH) val = TH;
+    if (sss === "B" && y === 2 + PIT_DEPTH) val = TH;
+    if (sss === "C" && y === 3 + PIT_DEPTH) val = TH;
+    if (sss === "o" && y <= PIT_DEPTH)       val = -TH * 50;
+    if (sss === "o" && y === 0)              val = TH * 10000;
+    if ((sss==="A"||sss==="B"||sss==="C"||sss==="w") && y === 0) val = TH * 10000;
+    values[idx] = val;
+  }
+  return { points, values };
+}
+
+// ============================================================
+// MARCHING CUBES LOOKUP TABLES
+// ============================================================
+const edgeTable = new Int32Array([
+  0x0,0x109,0x203,0x30a,0x406,0x50f,0x605,0x70c,0x80c,0x905,0xa0f,0xb06,0xc0a,0xd03,0xe09,0xf00,
+  0x190,0x99,0x393,0x29a,0x596,0x49f,0x795,0x69c,0x99c,0x895,0xb9f,0xa96,0xd9a,0xc93,0xf99,0xe90,
+  0x230,0x339,0x33,0x13a,0x636,0x73f,0x435,0x53c,0xa3c,0xb35,0x83f,0x936,0xe3a,0xf33,0xc39,0xd30,
+  0x3a0,0x2a9,0x1a3,0xaa,0x7a6,0x6af,0x5a5,0x4ac,0xbac,0xaa5,0x9af,0x8a6,0xfaa,0xea3,0xda9,0xca0,
+  0x460,0x569,0x663,0x76a,0x66,0x16f,0x265,0x36c,0xc6c,0xd65,0xe6f,0xf66,0x86a,0x963,0xa69,0xb60,
+  0x5f0,0x4f9,0x7f3,0x6fa,0x1f6,0xff,0x3f5,0x2fc,0xdfc,0xcf5,0xfff,0xef6,0x9fa,0x8f3,0xbf9,0xaf0,
+  0x650,0x759,0x453,0x55a,0x256,0x35f,0x55,0x15c,0xe5c,0xf55,0xc5f,0xd56,0xa5a,0xb53,0x859,0x950,
+  0x7c0,0x6c9,0x5c3,0x4ca,0x3c6,0x2cf,0x1c5,0xcc,0xfcc,0xec5,0xdcf,0xcc6,0xbca,0xac3,0x9c9,0x8c0,
+  0x8c0,0x9c9,0xac3,0xbca,0xcc6,0xdcf,0xec5,0xfcc,0xcc,0x1c5,0x2cf,0x3c6,0x4ca,0x5c3,0x6c9,0x7c0,
+  0x950,0x859,0xb53,0xa5a,0xd56,0xc5f,0xf55,0xe5c,0x15c,0x55,0x35f,0x256,0x55a,0x453,0x759,0x650,
+  0xaf0,0xbf9,0x8f3,0x9fa,0xef6,0xfff,0xcf5,0xdfc,0x2fc,0x3f5,0xff,0x1f6,0x6fa,0x7f3,0x4f9,0x5f0,
+  0xb60,0xa69,0x963,0x86a,0xf66,0xe6f,0xd65,0xc6c,0x36c,0x265,0x16f,0x66,0x76a,0x663,0x569,0x460,
+  0xca0,0xda9,0xea3,0xfaa,0x8a6,0x9af,0xaa5,0xbac,0x4ac,0x5a5,0x6af,0x7a6,0xaa,0x1a3,0x2a9,0x3a0,
+  0xd30,0xc39,0xf33,0xe3a,0x936,0x83f,0xb35,0xa3c,0x53c,0x435,0x73f,0x636,0x13a,0x33,0x339,0x230,
+  0xe90,0xf99,0xc93,0xd9a,0xa96,0xb9f,0x895,0x99c,0x69c,0x795,0x49f,0x596,0x29a,0x393,0x99,0x190,
+  0xf00,0xe09,0xd03,0xc0a,0xb06,0xa0f,0x905,0x80c,0x70c,0x605,0x50f,0x406,0x30a,0x203,0x109,0x0
+]);
+const triTable = new Int32Array([
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,0,8,3,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  0,1,9,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,1,8,3,9,8,1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  1,2,10,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,0,8,3,1,2,10,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  9,2,10,0,2,9,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,2,8,3,2,10,8,10,9,8,-1,-1,-1,-1,-1,-1,-1,
+  3,11,2,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,0,11,2,8,11,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  1,9,0,2,3,11,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,1,11,2,1,9,11,9,8,11,-1,-1,-1,-1,-1,-1,-1,
+  3,10,1,11,10,3,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,0,10,1,0,8,10,8,11,10,-1,-1,-1,-1,-1,-1,-1,
+  3,9,0,3,11,9,11,10,9,-1,-1,-1,-1,-1,-1,-1,9,8,10,10,8,11,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  4,7,8,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,4,3,0,7,3,4,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  0,1,9,8,4,7,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,4,1,9,4,7,1,7,3,1,-1,-1,-1,-1,-1,-1,-1,
+  1,2,10,8,4,7,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,3,4,7,3,0,4,1,2,10,-1,-1,-1,-1,-1,-1,-1,
+  9,2,10,9,0,2,8,4,7,-1,-1,-1,-1,-1,-1,-1,2,10,9,2,9,7,2,7,3,7,9,4,-1,-1,-1,-1,
+  8,4,7,3,11,2,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,11,4,7,11,2,4,2,0,4,-1,-1,-1,-1,-1,-1,-1,
+  9,0,1,8,4,7,2,3,11,-1,-1,-1,-1,-1,-1,-1,4,7,11,9,4,11,9,11,2,9,2,1,-1,-1,-1,-1,
+  3,10,1,3,11,10,7,8,4,-1,-1,-1,-1,-1,-1,-1,1,11,10,1,4,11,1,0,4,7,11,4,-1,-1,-1,-1,
+  4,7,8,9,0,11,9,11,10,11,0,3,-1,-1,-1,-1,4,7,11,4,11,9,9,11,10,-1,-1,-1,-1,-1,-1,-1,
+  9,5,4,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,9,5,4,0,8,3,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  0,5,4,1,5,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,8,5,4,8,3,5,3,1,5,-1,-1,-1,-1,-1,-1,-1,
+  1,2,10,9,5,4,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,3,0,8,1,2,10,4,9,5,-1,-1,-1,-1,-1,-1,-1,
+  5,2,10,5,4,2,4,0,2,-1,-1,-1,-1,-1,-1,-1,2,10,5,3,2,5,3,5,4,3,4,8,-1,-1,-1,-1,
+  9,5,4,2,3,11,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,0,11,2,0,8,11,4,9,5,-1,-1,-1,-1,-1,-1,-1,
+  0,5,4,0,1,5,2,3,11,-1,-1,-1,-1,-1,-1,-1,2,1,5,2,5,8,2,8,11,4,8,5,-1,-1,-1,-1,
+  10,3,11,10,1,3,9,5,4,-1,-1,-1,-1,-1,-1,-1,4,9,5,0,8,1,8,10,1,8,11,10,-1,-1,-1,-1,
+  5,4,0,5,0,11,5,11,10,11,0,3,-1,-1,-1,-1,5,4,8,5,8,10,10,8,11,-1,-1,-1,-1,-1,-1,-1,
+  9,7,8,5,7,9,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,9,3,0,9,5,3,5,7,3,-1,-1,-1,-1,-1,-1,-1,
+  0,7,8,0,1,7,1,5,7,-1,-1,-1,-1,-1,-1,-1,1,5,3,3,5,7,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  9,7,8,9,5,7,10,1,2,-1,-1,-1,-1,-1,-1,-1,10,1,2,9,5,0,5,3,0,5,7,3,-1,-1,-1,-1,
+  8,0,2,8,2,5,8,5,7,10,5,2,-1,-1,-1,-1,2,10,5,2,5,3,3,5,7,-1,-1,-1,-1,-1,-1,-1,
+  7,9,5,7,8,9,3,11,2,-1,-1,-1,-1,-1,-1,-1,9,5,7,9,7,2,9,2,0,2,7,11,-1,-1,-1,-1,
+  2,3,11,0,1,8,1,7,8,1,5,7,-1,-1,-1,-1,11,2,1,11,1,7,7,1,5,-1,-1,-1,-1,-1,-1,-1,
+  9,5,8,8,5,7,10,1,3,10,3,11,-1,-1,-1,-1,5,7,0,5,0,9,7,11,0,1,0,10,11,10,0,-1,
+  11,10,0,11,0,3,10,5,0,8,0,7,5,7,0,-1,11,10,5,7,11,5,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  10,6,5,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,0,8,3,5,10,6,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  9,0,1,5,10,6,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,1,8,3,1,9,8,5,10,6,-1,-1,-1,-1,-1,-1,-1,
+  1,6,5,2,6,1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,1,6,5,1,2,6,3,0,8,-1,-1,-1,-1,-1,-1,-1,
+  9,6,5,9,0,6,0,2,6,-1,-1,-1,-1,-1,-1,-1,5,9,8,5,8,2,5,2,6,3,2,8,-1,-1,-1,-1,
+  2,3,11,10,6,5,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,11,0,8,11,2,0,10,6,5,-1,-1,-1,-1,-1,-1,-1,
+  0,1,9,2,3,11,5,10,6,-1,-1,-1,-1,-1,-1,-1,5,10,6,1,9,2,9,11,2,9,8,11,-1,-1,-1,-1,
+  6,3,11,6,5,3,5,1,3,-1,-1,-1,-1,-1,-1,-1,0,8,11,0,11,5,0,5,1,5,11,6,-1,-1,-1,-1,
+  3,11,6,0,3,6,0,6,5,0,5,9,-1,-1,-1,-1,6,5,9,6,9,11,11,9,8,-1,-1,-1,-1,-1,-1,-1,
+  5,10,6,4,7,8,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,4,3,0,4,7,3,6,5,10,-1,-1,-1,-1,-1,-1,-1,
+  1,9,0,5,10,6,8,4,7,-1,-1,-1,-1,-1,-1,-1,10,6,5,1,9,7,1,7,3,7,9,4,-1,-1,-1,-1,
+  6,1,2,6,5,1,4,7,8,-1,-1,-1,-1,-1,-1,-1,1,2,5,5,2,6,3,0,4,3,4,7,-1,-1,-1,-1,
+  8,4,7,9,0,5,0,6,5,0,2,6,-1,-1,-1,-1,7,3,9,7,9,4,3,2,9,5,9,6,2,6,9,-1,
+  3,11,2,7,8,4,10,6,5,-1,-1,-1,-1,-1,-1,-1,5,10,6,4,7,2,4,2,0,2,7,11,-1,-1,-1,-1,
+  0,1,9,4,7,8,2,3,11,5,10,6,-1,-1,-1,-1,9,2,1,9,11,2,9,4,11,7,11,4,5,10,6,-1,
+  8,4,7,3,11,5,3,5,1,5,11,6,-1,-1,-1,-1,5,1,11,5,11,6,1,0,11,7,11,4,0,4,11,-1,
+  0,5,9,0,6,5,0,3,6,11,6,3,8,4,7,-1,6,5,9,6,9,11,4,7,9,7,11,9,-1,-1,-1,-1,
+  10,4,9,6,4,10,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,4,10,6,4,9,10,0,8,3,-1,-1,-1,-1,-1,-1,-1,
+  10,0,1,10,6,0,6,4,0,-1,-1,-1,-1,-1,-1,-1,8,3,1,8,1,6,8,6,4,6,1,10,-1,-1,-1,-1,
+  1,4,9,1,2,4,2,6,4,-1,-1,-1,-1,-1,-1,-1,3,0,8,1,2,9,2,4,9,2,6,4,-1,-1,-1,-1,
+  0,2,4,4,2,6,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,8,3,2,8,2,4,4,2,6,-1,-1,-1,-1,-1,-1,-1,
+  10,4,9,10,6,4,11,2,3,-1,-1,-1,-1,-1,-1,-1,0,8,2,2,8,11,4,9,10,4,10,6,-1,-1,-1,-1,
+  3,11,2,0,1,6,0,6,4,6,1,10,-1,-1,-1,-1,6,4,1,6,1,10,4,8,1,2,1,11,8,11,1,-1,
+  9,6,4,9,3,6,9,1,3,11,6,3,-1,-1,-1,-1,8,11,1,8,1,0,11,6,1,9,1,4,6,4,1,-1,
+  3,11,6,3,6,0,0,6,4,-1,-1,-1,-1,-1,-1,-1,6,4,8,11,6,8,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  7,10,6,7,8,10,8,9,10,-1,-1,-1,-1,-1,-1,-1,0,7,3,0,10,7,0,9,10,6,7,10,-1,-1,-1,-1,
+  10,6,7,1,10,7,1,7,8,1,8,0,-1,-1,-1,-1,10,6,7,10,7,1,1,7,3,-1,-1,-1,-1,-1,-1,-1,
+  1,2,6,1,6,8,1,8,9,8,6,7,-1,-1,-1,-1,2,6,9,2,9,1,6,7,9,0,9,3,7,3,9,-1,
+  7,8,0,7,0,6,6,0,2,-1,-1,-1,-1,-1,-1,-1,7,3,2,6,7,2,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  2,3,11,10,6,8,10,8,9,8,6,7,-1,-1,-1,-1,2,0,7,2,7,11,0,9,7,6,7,10,9,10,7,-1,
+  1,8,0,1,7,8,1,10,7,6,7,10,2,3,11,-1,11,2,1,11,1,7,10,6,1,6,7,1,-1,-1,-1,-1,
+  8,9,6,8,6,7,9,1,6,11,6,3,1,3,6,-1,0,9,1,11,6,7,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  7,8,0,7,0,6,3,11,0,11,6,0,-1,-1,-1,-1,7,11,6,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  7,6,11,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,3,0,8,11,7,6,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  0,1,9,11,7,6,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,8,1,9,8,3,1,11,7,6,-1,-1,-1,-1,-1,-1,-1,
+  10,1,2,6,11,7,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,1,2,10,3,0,8,6,11,7,-1,-1,-1,-1,-1,-1,-1,
+  2,9,0,2,10,9,6,11,7,-1,-1,-1,-1,-1,-1,-1,6,11,7,2,10,3,10,8,3,10,9,8,-1,-1,-1,-1,
+  7,2,3,6,2,7,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,7,0,8,7,6,0,6,2,0,-1,-1,-1,-1,-1,-1,-1,
+  2,7,6,2,3,7,0,1,9,-1,-1,-1,-1,-1,-1,-1,1,6,2,1,8,6,1,9,8,8,7,6,-1,-1,-1,-1,
+  10,7,6,10,1,7,1,3,7,-1,-1,-1,-1,-1,-1,-1,10,7,6,1,7,10,1,8,7,1,0,8,-1,-1,-1,-1,
+  0,3,7,0,7,10,0,10,9,6,10,7,-1,-1,-1,-1,7,6,10,7,10,8,8,10,9,-1,-1,-1,-1,-1,-1,-1,
+  6,8,4,11,8,6,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,3,6,11,3,0,6,0,4,6,-1,-1,-1,-1,-1,-1,-1,
+  8,6,11,8,4,6,9,0,1,-1,-1,-1,-1,-1,-1,-1,9,4,6,9,6,3,9,3,1,11,3,6,-1,-1,-1,-1,
+  6,8,4,6,11,8,2,10,1,-1,-1,-1,-1,-1,-1,-1,1,2,10,3,0,11,0,6,11,0,4,6,-1,-1,-1,-1,
+  4,11,8,4,6,11,0,2,9,2,10,9,-1,-1,-1,-1,10,9,3,10,3,2,9,4,3,11,3,6,4,6,3,-1,
+  8,2,3,8,4,2,4,6,2,-1,-1,-1,-1,-1,-1,-1,0,4,2,4,6,2,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  1,9,0,2,3,4,2,4,6,4,3,8,-1,-1,-1,-1,1,9,4,1,4,2,2,4,6,-1,-1,-1,-1,-1,-1,-1,
+  8,1,3,8,6,1,8,4,6,6,10,1,-1,-1,-1,-1,10,1,0,10,0,6,6,0,4,-1,-1,-1,-1,-1,-1,-1,
+  4,6,3,4,3,8,6,10,3,0,3,9,10,9,3,-1,10,9,4,6,10,4,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  4,9,5,7,6,11,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,0,8,3,4,9,5,11,7,6,-1,-1,-1,-1,-1,-1,-1,
+  5,0,1,5,4,0,7,6,11,-1,-1,-1,-1,-1,-1,-1,11,7,6,8,3,4,3,5,4,3,1,5,-1,-1,-1,-1,
+  9,5,4,10,1,2,7,6,11,-1,-1,-1,-1,-1,-1,-1,6,11,7,1,2,10,0,8,3,4,9,5,-1,-1,-1,-1,
+  7,6,11,5,4,10,4,2,10,4,0,2,-1,-1,-1,-1,3,4,8,3,5,4,3,2,5,10,5,2,11,7,6,-1,
+  7,2,3,7,6,2,5,4,9,-1,-1,-1,-1,-1,-1,-1,9,5,4,0,8,6,0,6,2,6,8,7,-1,-1,-1,-1,
+  3,6,2,3,7,6,1,5,0,5,4,0,-1,-1,-1,-1,6,2,8,6,8,7,2,1,8,4,8,5,1,5,8,-1,
+  9,5,4,10,1,6,1,7,6,1,3,7,-1,-1,-1,-1,1,6,10,1,7,6,1,0,7,8,7,0,9,5,4,-1,
+  4,0,10,4,10,5,0,3,10,6,10,7,3,7,10,-1,7,6,10,7,10,8,5,4,10,4,8,10,-1,-1,-1,-1,
+  6,9,5,6,11,9,11,8,9,-1,-1,-1,-1,-1,-1,-1,3,6,11,0,6,3,0,5,6,0,9,5,-1,-1,-1,-1,
+  0,11,8,0,5,11,0,1,5,5,6,11,-1,-1,-1,-1,6,11,3,6,3,5,5,3,1,-1,-1,-1,-1,-1,-1,-1,
+  1,2,10,9,5,11,9,11,8,11,5,6,-1,-1,-1,-1,0,11,3,0,6,11,0,9,6,5,6,9,1,2,10,-1,
+  11,8,5,11,5,6,8,0,5,10,5,2,0,2,5,-1,6,11,3,6,3,5,2,10,3,10,5,3,-1,-1,-1,-1,
+  5,8,9,5,2,8,5,6,2,3,8,2,-1,-1,-1,-1,9,5,6,9,6,0,0,6,2,-1,-1,-1,-1,-1,-1,-1,
+  1,5,8,1,8,0,5,6,8,3,8,2,6,2,8,-1,1,5,6,2,1,6,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  1,3,6,1,6,10,3,8,6,5,6,9,8,9,6,-1,10,1,0,10,0,6,9,5,0,5,6,0,-1,-1,-1,-1,
+  0,3,8,5,6,10,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,10,5,6,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  11,5,10,7,5,11,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,11,5,10,11,7,5,8,3,0,-1,-1,-1,-1,-1,-1,-1,
+  5,11,7,5,10,11,1,9,0,-1,-1,-1,-1,-1,-1,-1,10,7,5,10,11,7,9,8,1,8,3,1,-1,-1,-1,-1,
+  11,1,2,11,7,1,7,5,1,-1,-1,-1,-1,-1,-1,-1,0,8,3,1,2,7,1,7,5,7,2,11,-1,-1,-1,-1,
+  9,7,5,9,2,7,9,0,2,2,11,7,-1,-1,-1,-1,7,5,2,7,2,11,5,9,2,3,2,8,9,8,2,-1,
+  2,5,10,2,3,5,3,7,5,-1,-1,-1,-1,-1,-1,-1,8,2,0,8,5,2,8,7,5,10,2,5,-1,-1,-1,-1,
+  9,0,1,5,10,3,5,3,7,3,10,2,-1,-1,-1,-1,9,8,2,9,2,1,8,7,2,10,2,5,7,5,2,-1,
+  1,3,5,3,7,5,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,0,8,7,0,7,1,1,7,5,-1,-1,-1,-1,-1,-1,-1,
+  9,0,3,9,3,5,5,3,7,-1,-1,-1,-1,-1,-1,-1,9,8,7,5,9,7,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  5,8,4,5,10,8,10,11,8,-1,-1,-1,-1,-1,-1,-1,5,0,4,5,11,0,5,10,11,11,3,0,-1,-1,-1,-1,
+  0,1,9,8,4,10,8,10,11,10,4,5,-1,-1,-1,-1,10,11,4,10,4,5,11,3,4,9,4,1,3,1,4,-1,
+  2,5,1,2,8,5,2,11,8,4,5,8,-1,-1,-1,-1,0,4,11,0,11,3,4,5,11,2,11,1,5,1,11,-1,
+  0,2,5,0,5,9,2,11,5,4,5,8,11,8,5,-1,9,4,5,2,11,3,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  2,5,10,3,5,2,3,4,5,3,8,4,-1,-1,-1,-1,5,10,2,5,2,4,4,2,0,-1,-1,-1,-1,-1,-1,-1,
+  3,10,2,3,5,10,3,8,5,4,5,8,0,1,9,-1,5,10,2,5,2,4,1,9,2,9,4,2,-1,-1,-1,-1,
+  8,4,5,8,5,3,3,5,1,-1,-1,-1,-1,-1,-1,-1,0,4,5,1,0,5,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  8,4,5,8,5,3,9,0,5,0,3,5,-1,-1,-1,-1,9,4,5,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  4,11,7,4,9,11,9,10,11,-1,-1,-1,-1,-1,-1,-1,0,8,3,4,9,7,9,11,7,9,10,11,-1,-1,-1,-1,
+  1,10,11,1,11,4,1,4,0,7,4,11,-1,-1,-1,-1,3,1,4,3,4,8,1,10,4,7,4,11,10,11,4,-1,
+  4,11,7,9,11,4,9,2,11,9,1,2,-1,-1,-1,-1,9,7,4,9,11,7,9,1,11,2,11,1,0,8,3,-1,
+  11,7,4,11,4,2,2,4,0,-1,-1,-1,-1,-1,-1,-1,11,7,4,11,4,2,8,3,4,3,2,4,-1,-1,-1,-1,
+  2,9,10,2,7,9,2,3,7,7,4,9,-1,-1,-1,-1,9,10,7,9,7,4,10,2,7,8,7,0,2,0,7,-1,
+  3,7,10,3,10,2,7,4,10,1,10,0,4,0,10,-1,1,10,2,8,7,4,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  4,9,1,4,1,7,7,1,3,-1,-1,-1,-1,-1,-1,-1,4,9,1,4,1,7,0,8,1,8,7,1,-1,-1,-1,-1,
+  4,0,3,7,4,3,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,4,8,7,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  9,10,8,10,11,8,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,3,0,9,3,9,11,11,9,10,-1,-1,-1,-1,-1,-1,-1,
+  0,1,10,0,10,8,8,10,11,-1,-1,-1,-1,-1,-1,-1,3,1,10,11,3,10,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  1,2,11,1,11,9,9,11,8,-1,-1,-1,-1,-1,-1,-1,3,0,9,3,9,11,1,2,9,2,11,9,-1,-1,-1,-1,
+  0,2,11,8,0,11,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,3,2,11,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  2,3,8,2,8,10,10,8,9,-1,-1,-1,-1,-1,-1,-1,9,10,2,0,9,2,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  2,3,8,2,8,10,0,1,8,1,10,8,-1,-1,-1,-1,1,10,2,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  1,3,8,9,1,8,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,0,9,1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  0,3,8,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+]);
+
+// ============================================================
+// MARCHING CUBES ALGORITHM
+// ============================================================
+function marchingCubes(points, values) {
+  const verts = [];
+  const vlist = new Array(12);
+  function lerp(p1, p2, mu) {
+    return [p1[0]+(p2[0]-p1[0])*mu, p1[1]+(p2[1]-p1[1])*mu, p1[2]+(p2[2]-p1[2])*mu];
+  }
+  for (let z = 0; z < SIZE-1; z++)
+  for (let y = 0; y < SIZE-1; y++)
+  for (let xi = 0; xi < SIZE-1; xi++) {
+    const p=xi+y*SIZE+z*SIZE2, px=p+1, py=p+SIZE, pxy=py+1;
+    const pz=p+SIZE2, pxz=px+SIZE2, pyz=py+SIZE2, pxyz=pxy+SIZE2;
+    const v0=values[p],v1=values[px],v2=values[py],v3=values[pxy];
+    const v4=values[pz],v5=values[pxz],v6=values[pyz],v7=values[pxyz];
+    let ci=0;
+    if(v0<ISOLEVEL)ci|=1; if(v1<ISOLEVEL)ci|=2; if(v2<ISOLEVEL)ci|=8; if(v3<ISOLEVEL)ci|=4;
+    if(v4<ISOLEVEL)ci|=16; if(v5<ISOLEVEL)ci|=32; if(v6<ISOLEVEL)ci|=128; if(v7<ISOLEVEL)ci|=64;
+    const bits=edgeTable[ci]; if(bits===0) continue;
+    if(bits&1){const mu=(ISOLEVEL-v0)/(v1-v0);vlist[0]=lerp(points[p],points[px],mu);}
+    if(bits&2){const mu=(ISOLEVEL-v1)/(v3-v1);vlist[1]=lerp(points[px],points[pxy],mu);}
+    if(bits&4){const mu=(ISOLEVEL-v2)/(v3-v2);vlist[2]=lerp(points[py],points[pxy],mu);}
+    if(bits&8){const mu=(ISOLEVEL-v0)/(v2-v0);vlist[3]=lerp(points[p],points[py],mu);}
+    if(bits&16){const mu=(ISOLEVEL-v4)/(v5-v4);vlist[4]=lerp(points[pz],points[pxz],mu);}
+    if(bits&32){const mu=(ISOLEVEL-v5)/(v7-v5);vlist[5]=lerp(points[pxz],points[pxyz],mu);}
+    if(bits&64){const mu=(ISOLEVEL-v6)/(v7-v6);vlist[6]=lerp(points[pyz],points[pxyz],mu);}
+    if(bits&128){const mu=(ISOLEVEL-v4)/(v6-v4);vlist[7]=lerp(points[pz],points[pyz],mu);}
+    if(bits&256){const mu=(ISOLEVEL-v0)/(v4-v0);vlist[8]=lerp(points[p],points[pz],mu);}
+    if(bits&512){const mu=(ISOLEVEL-v1)/(v5-v1);vlist[9]=lerp(points[px],points[pxz],mu);}
+    if(bits&1024){const mu=(ISOLEVEL-v3)/(v7-v3);vlist[10]=lerp(points[pxy],points[pxyz],mu);}
+    if(bits&2048){const mu=(ISOLEVEL-v2)/(v6-v2);vlist[11]=lerp(points[py],points[pyz],mu);}
+    let i=0; const off=ci<<4;
+    while(triTable[off+i]!==-1){
+      const va=vlist[triTable[off+i]],vb=vlist[triTable[off+i+1]],vc=vlist[triTable[off+i+2]];
+      verts.push(va[0],va[1],va[2],vb[0],vb[1],vb[2],vc[0],vc[1],vc[2]); i+=3;
+    }
+  }
+  return new Float32Array(verts);
+}
+
+// ============================================================
+// THREE.JS SCENE
+// ============================================================
+dbg('Step 2: Building scene...');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d1117);
+scene.fog = new THREE.FogExp2(0x0d1117, 0.007);
+
+const ambLight  = new THREE.AmbientLight(0x334466, 2.0);
+scene.add(ambLight);
+const dirLight  = new THREE.DirectionalLight(0xfff3cc, 2.8);
+dirLight.position.set(40, 80, 60);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.set(2048, 2048);
+dirLight.shadow.camera.near = 1;
+dirLight.shadow.camera.far  = 300;
+dirLight.shadow.camera.left  = -80;
+dirLight.shadow.camera.right =  80;
+dirLight.shadow.camera.top   =  80;
+dirLight.shadow.camera.bottom = -80;
+scene.add(dirLight);
+const fillLight = new THREE.DirectionalLight(0x1a3050, 1.0);
+fillLight.position.set(-1, 0.5, -1);
+scene.add(fillLight);
+
+const W = window.innerWidth, H = window.innerHeight;
+const camera = new THREE.PerspectiveCamera(55, W / H, 0.5, 500);
+const CX = AXIS_MAX / 2, CZ = AXIS_MAX / 2;
+const FLOOR_Y = AXIS_MAX * PIT_DEPTH / (SIZE - 1);
+const HOME_POS    = new THREE.Vector3(CX - 20, FLOOR_Y + 35, CZ + 65);
+const HOME_TARGET = new THREE.Vector3(CX, FLOOR_Y, CZ);
+camera.position.copy(HOME_POS);
+camera.lookAt(HOME_TARGET);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(W, H);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+dbg(`Step 3: Renderer created (${window.innerWidth}×${window.innerHeight})`);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.copy(HOME_TARGET);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.update();
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ── Dungeon mesh ───────────────────────────────────────────────
+dbg('Step 4: Building scalar field...');
+const { points, values } = buildScalarField();
+dbg('Step 5: Running marching cubes...');
+const posArray = marchingCubes(points, values);
+const dungeonGeo = new THREE.BufferGeometry();
+dungeonGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+dungeonGeo.computeVertexNormals();
+const dungeonMat = new THREE.MeshLambertMaterial({ color: 0x5a6670, side: THREE.DoubleSide });
+const dungeonMesh = new THREE.Mesh(dungeonGeo, dungeonMat);
+dungeonMesh.castShadow = true;
+dungeonMesh.receiveShadow = true;
+scene.add(dungeonMesh);
+dbg(`Step 6: Dungeon mesh added (${posArray.length / 9 | 0} triangles)`);
+
+// ============================================================
+// GAME STATE
+// ============================================================
+let paused     = false;
+let debugMode  = false;
+let gameOver   = false;
+let slopeThreshold  = 1;
+let sightRadius     = 14;
+let noiseRadius     = 8;
+let combatSpeedMult = 1.0;
+let charScale       = 2.0;
+let navGraph   = null;
+let entityIdCounter = 0;
+const entities = [];
+const gltfCache = new Map();
+const loader = new GLTFLoader();
+const GLTF_BASE = 'Assets/glTF-20260303T101604Z-1-001/glTF/';
+
+// ============================================================
+// NAV GRAPH
+// ============================================================
+const TILE_HEIGHTS = { "_":0, "w":0, "a":1, "b":2, "c":3, "A":1, "B":2, "C":3 };
+
+function buildNavGraph(slopeThresh) {
+  const nodes = new Map();
+  for (let xi = 0; xi < SIZE; xi++) {
+    for (let z = 0; z < SIZE; z++) {
+      const tile = mjkMap[xi][z];
+      if (!(tile in TILE_HEIGHTS)) continue;
+      const hl = TILE_HEIGHTS[tile];
+      nodes.set(`${xi},${z}`, {
+        xi, z,
+        worldX: AXIS_RANGE * xi / (SIZE - 1),
+        worldY: FLOOR_SURFACE + hl * VSTEP,
+        worldZ: AXIS_RANGE * z / (SIZE - 1),
+        heightLevel: hl,
+        neighbors: []
+      });
+    }
+  }
+  for (const [, node] of nodes) {
+    for (const [dx, dz] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+      const nk = `${node.xi+dx},${node.z+dz}`;
+      if (!nodes.has(nk)) continue;
+      const nb = nodes.get(nk);
+      if (Math.abs(node.heightLevel - nb.heightLevel) <= slopeThresh) {
+        node.neighbors.push(nb);
+      }
+    }
+  }
+  return { nodes };
+}
+
+// ============================================================
+// A*
+// ============================================================
+function astar(nodes, start, goal) {
+  if (!start || !goal) return [];
+  if (start === goal) return [];
+
+  const open = new Set([start]);
+  const cameFrom = new Map();
+  const gScore = new Map([[start, 0]]);
+  const fScore = new Map([[start, heur(start, goal)]]);
+
+  function heur(a, b) {
+    return Math.abs(a.xi - b.xi) + Math.abs(a.z - b.z) + Math.abs(a.heightLevel - b.heightLevel) * 0.5;
+  }
+
+  let iter = 0;
+  while (open.size > 0 && iter++ < 3000) {
+    let cur = null, best = Infinity;
+    for (const n of open) { const f = fScore.get(n) ?? Infinity; if (f < best) { best = f; cur = n; } }
+    if (cur === goal) {
+      const path = [];
+      let n = goal;
+      while (cameFrom.has(n)) { path.unshift(n); n = cameFrom.get(n); }
+      return path;
+    }
+    open.delete(cur);
+    for (const nb of cur.neighbors) {
+      const tg = (gScore.get(cur) ?? Infinity) + 1 + Math.abs(cur.heightLevel - nb.heightLevel) * 0.5;
+      if (tg < (gScore.get(nb) ?? Infinity)) {
+        cameFrom.set(nb, cur);
+        gScore.set(nb, tg);
+        fScore.set(nb, tg + heur(nb, goal));
+        open.add(nb);
+      }
+    }
+  }
+  return [];
+}
+
+// ============================================================
+// DICE + STATS
+// ============================================================
+function rollDice(spec) {
+  const m = spec.match(/(\d+)d(\d+)([+-]\d+)?/);
+  if (!m) return 1;
+  const n = parseInt(m[1]), d = parseInt(m[2]), mod = m[3] ? parseInt(m[3]) : 0;
+  let total = mod;
+  for (let i = 0; i < n; i++) total += 1 + Math.floor(Math.random() * d);
+  return Math.max(1, total);
+}
+
+const STAT_TEMPLATES = {
+  goblin: { maxHp:  7, ac: 11, attackBonus: 4, damageDice: '1d6',   attackSpeed: 2.0 },
+  knight: { maxHp: 16, ac: 16, attackBonus: 5, damageDice: '1d8+3', attackSpeed: 1.5 },
+  wizard: { maxHp:  6, ac: 12, attackBonus: 4, damageDice: '1d6+2', attackSpeed: 2.5 },
+  elf:    { maxHp:  8, ac: 13, attackBonus: 5, damageDice: '1d8',   attackSpeed: 1.5 },
+};
+
+// ============================================================
+// COMBAT LOG
+// ============================================================
+const combatLog = [];
+function addLog(msg) {
+  combatLog.push(msg);
+  if (combatLog.length > 8) combatLog.shift();
+  const el = document.getElementById('log-content');
+  if (el) el.innerHTML = combatLog.map(m => `<div>${m}</div>`).join('');
+}
+
+// ============================================================
+// COMBAT
+// ============================================================
+function resolveAttack(attacker, defender) {
+  if (attacker.aiState === 'dead' || defender.aiState === 'dead') return;
+  const roll  = 1 + Math.floor(Math.random() * 20);
+  const total = roll + attacker.stats.attackBonus;
+  if (total >= defender.stats.ac) {
+    const dmg = rollDice(attacker.stats.damageDice);
+    defender.hp = Math.max(0, defender.hp - dmg);
+    addLog(`${attacker.name} hits ${defender.name} for ${dmg} (${total} vs AC ${defender.stats.ac})`);
+    if (defender.hp <= 0) {
+      killEntity(defender);
+    } else {
+      defender.playAnimation('RecieveHit', false, () => {
+        if (defender.aiState !== 'dead') defender.playAnimation('Idle', true, null);
+      });
+    }
+    updateHPBar(defender);
+  } else {
+    addLog(`${attacker.name} misses ${defender.name} (${total} vs AC ${defender.stats.ac})`);
+  }
+  attacker.attackTimer = attacker.stats.attackSpeed / combatSpeedMult;
+}
+
+function killEntity(entity) {
+  entity.aiState = 'dead';
+  entity.path = [];
+  entity.playAnimation('Death', false, null);
+  addLog(`☠ ${entity.name} is slain!`);
+  for (const e of entities) {
+    if (e.target === entity) { e.target = null; e.aiState = 'idle'; e.path = []; }
+  }
+  setTimeout(checkVictory, 800);
+}
+
+function checkVictory() {
+  if (gameOver) return;
+  const pAlive = entities.filter(e => e.faction === 'player' && e.aiState !== 'dead');
+  const eAlive = entities.filter(e => e.faction === 'enemy'  && e.aiState !== 'dead');
+  if (eAlive.length === 0 && pAlive.length > 0) {
+    addLog('★ Party is victorious!');
+    for (const e of pAlive) e.playAnimation('Victory', true, null);
+    gameOver = true;
+  } else if (pAlive.length === 0) {
+    addLog('✗ The party has fallen.');
+    gameOver = true;
+  }
+}
+
+// ============================================================
+// PERCEPTION
+// ============================================================
+const losRaycaster = new THREE.Raycaster();
+function inRange(a, b, radius) {
+  return a.position.distanceTo(b.position) < radius;
+}
+function hasLOS(a, b) {
+  const from = a.position.clone(); from.y += 1.0;
+  const to   = b.position.clone(); to.y   += 1.0;
+  const dir  = to.clone().sub(from);
+  const dist = dir.length();
+  if (dist < 0.01) return true;
+  losRaycaster.set(from, dir.normalize());
+  losRaycaster.far = dist - 0.3;
+  const hits = losRaycaster.intersectObject(dungeonMesh, false);
+  return hits.length === 0;
+}
+function alertNearby(source, all) {
+  for (const e of all) {
+    if (e === source || e.faction !== source.faction || e.aiState !== 'idle') continue;
+    if (inRange(source, e, noiseRadius)) { e.target = source.target; e.aiState = 'seek'; }
+  }
+}
+
+// ============================================================
+// STEERING
+// ============================================================
+const _sepForce = new THREE.Vector3();
+function separationForce(entity, all, radius = 3.2) {
+  _sepForce.set(0, 0, 0);
+  for (const other of all) {
+    if (other === entity || other.aiState === 'dead') continue;
+    const d = entity.position.distanceTo(other.position);
+    if (d < radius && d > 0.001) {
+      _sepForce.add(
+        entity.position.clone().sub(other.position).normalize().multiplyScalar((radius - d) / radius)
+      );
+    }
+  }
+  return _sepForce;
+}
+
+// ============================================================
+// CHARACTER ENTITY
+// ============================================================
+const MOVE_SPEED = 5.0;
+
+class CharacterEntity {
+  constructor(cfg) {
+    this.id       = entityIdCounter++;
+    this.name     = cfg.name;
+    this.faction  = cfg.faction;
+    this.npcType  = cfg.npcType ?? 'static';
+    this.stats    = { ...STAT_TEMPLATES[cfg.statKey] };
+    this.hp       = this.stats.maxHp;
+    this.spawnTile = cfg.tile;
+
+    this.model        = null;
+    this.mixer        = null;
+    this.animations   = {};
+    this.currentAction = null;
+    this.onAnimFinish = null;
+
+    this.currentNode     = null;
+    this.path            = [];
+    this.pathIndex       = 0;
+    this.position        = new THREE.Vector3();
+    this.recomputeTimer  = 0;
+
+    this.aiState      = 'idle';
+    this.target       = null;
+    this.attackTimer  = 0;
+    this.wanderTimer  = Math.random() * 3 + 1;
+
+    this.hpBarEl      = null;
+  }
+
+  playAnimation(name, loop, onFinish) {
+    if (!this.animations[name]) return;
+    const action = this.animations[name];
+    if (this.currentAction === action && loop) return; // already playing this loop
+
+    action.loop = loop ? THREE.LoopRepeat : THREE.LoopOnce;
+    action.clampWhenFinished = !loop;
+
+    if (this.currentAction && this.currentAction !== action) {
+      action.reset().play();
+      action.crossFadeFrom(this.currentAction, 0.15, false);
+    } else if (this.currentAction !== action) {
+      action.reset().play();
+    }
+    this.currentAction = action;
+    this.onAnimFinish  = onFinish ?? null;
+  }
+
+  getNearestNode() {
+    if (!navGraph) return null;
+    const approxXi = Math.round(this.position.x / VSTEP);
+    const approxZ  = Math.round(this.position.z / VSTEP);
+    let bestNode = null, bestDist = Infinity;
+    for (let dxi = -2; dxi <= 2; dxi++) {
+      for (let dz = -2; dz <= 2; dz++) {
+        const key = `${approxXi + dxi},${approxZ + dz}`;
+        if (!navGraph.nodes.has(key)) continue;
+        const node = navGraph.nodes.get(key);
+        const dx = this.position.x - node.worldX, dz2 = this.position.z - node.worldZ;
+        const dist = Math.sqrt(dx * dx + dz2 * dz2);
+        if (dist < bestDist) { bestDist = dist; bestNode = node; }
+      }
+    }
+    return bestNode;
+  }
+
+  update(dt, all) {
+    if (!this.model) return;
+    this.mixer.update(dt * combatSpeedMult);
+    if (this.aiState === 'dead') { this.model.position.copy(this.position); return; }
+
+    this.attackTimer     = Math.max(0, this.attackTimer - dt);
+    this.recomputeTimer  = Math.max(0, this.recomputeTimer - dt);
+
+    // Refresh currentNode periodically
+    if (!this.currentNode || this.recomputeTimer <= 0) {
+      const n = this.getNearestNode();
+      if (n) this.currentNode = n;
+    }
+
+    this._updateAI(all, dt);
+    this._updateMovement(dt, all);
+    this.model.position.copy(this.position);
+  }
+
+  _updateAI(all, dt) {
+    const enemies = all.filter(e => e.faction !== this.faction && e.aiState !== 'dead');
+
+    switch (this.aiState) {
+      case 'idle': {
+        // Wander logic for wanderer type
+        if (this.npcType === 'wanderer') {
+          this.wanderTimer -= dt;
+          if (this.wanderTimer <= 0 && this.path.length === 0) {
+            this.wanderTimer = 2 + Math.random() * 4;
+            if (this.currentNode && this.currentNode.neighbors.length > 0) {
+              const nb = this.currentNode.neighbors[Math.floor(Math.random() * this.currentNode.neighbors.length)];
+              this.path = [nb]; this.pathIndex = 0;
+              this.playAnimation('Walk_Carry', true, null);
+            }
+          }
+        }
+        // Seeker type: immediately hunt nearest enemy regardless of sight range
+        if (this.npcType === 'seeker' && enemies.length > 0) {
+          let nearest = null, bestDist = Infinity;
+          for (const e of enemies) {
+            const d = this.position.distanceTo(e.position);
+            if (d < bestDist) { bestDist = d; nearest = e; }
+          }
+          if (nearest) {
+            this.target = nearest; this.aiState = 'seek'; this.path = [];
+            this.playAnimation('Walk_Carry', true, null);
+          }
+          break;
+        }
+        // Scan for enemies within sight radius (static + wanderer)
+        for (const e of enemies) {
+          if (inRange(this, e, sightRadius) && hasLOS(this, e)) {
+            this.target = e; this.aiState = 'seek'; this.path = [];
+            alertNearby(this, all);
+            this.playAnimation('Walk_Carry', true, null);
+            break;
+          }
+        }
+        break;
+      }
+
+      case 'seek': {
+        if (!this.target || this.target.aiState === 'dead') {
+          // Seekers immediately re-target rather than going idle
+          if (this.npcType === 'seeker' && enemies.length > 0) {
+            let nearest = null, bestDist = Infinity;
+            for (const e of enemies) {
+              const d = this.position.distanceTo(e.position);
+              if (d < bestDist) { bestDist = d; nearest = e; }
+            }
+            this.target = nearest; this.path = []; break;
+          }
+          this.target = null; this.aiState = 'idle'; this.path = [];
+          this.playAnimation('Idle', true, null); break;
+        }
+        if (this.hp < this.stats.maxHp * 0.25) {
+          this.aiState = 'flee'; this.path = []; break;
+        }
+        if (isAdjacent(this, this.target)) {
+          this.aiState = 'attack'; this.path = [];
+          this.playAnimation('SwordSlash', true, null); break;
+        }
+        // Path to target, recompute every ~1.5s or when empty
+        if ((this.path.length === 0 || this.pathIndex >= this.path.length || this.recomputeTimer <= 0)
+             && this.currentNode && this.target.currentNode) {
+          const goalNode = getBestAttackNode(this, this.target, all) || this.target.currentNode;
+          this.path = astar(navGraph.nodes, this.currentNode, goalNode);
+          this.pathIndex = 0;
+          this.recomputeTimer = 1.5;
+        }
+        this.playAnimation('Walk_Carry', true, null);
+        break;
+      }
+
+      case 'attack': {
+        if (!this.target || this.target.aiState === 'dead') {
+          if (this.npcType === 'seeker' && enemies.length > 0) {
+            let nearest = null, bestDist = Infinity;
+            for (const e of enemies) { const d = this.position.distanceTo(e.position); if (d < bestDist) { bestDist = d; nearest = e; } }
+            this.target = nearest; this.aiState = 'seek'; this.path = []; break;
+          }
+          this.target = null; this.aiState = 'idle';
+          this.playAnimation('Idle', true, null); break;
+        }
+        if (!isAdjacent(this, this.target)) {
+          this.aiState = 'seek'; this.path = []; break;
+        }
+        // Keep sword animation, face target
+        this.playAnimation('SwordSlash', true, null);
+        if (this.model) {
+          const dir = this.target.position.clone().sub(this.position); dir.y = 0;
+          if (dir.length() > 0.01) this.model.lookAt(this.position.clone().add(dir));
+        }
+        if (this.attackTimer <= 0) resolveAttack(this, this.target);
+        break;
+      }
+
+      case 'flee': {
+        this.playAnimation('Run_Carry', true, null);
+        if ((this.path.length === 0 || this.pathIndex >= this.path.length) && this.currentNode) {
+          const fn = findFleeNode(this, enemies);
+          if (fn) { this.path = astar(navGraph.nodes, this.currentNode, fn); this.pathIndex = 0; }
+        }
+        if (enemies.every(e => !inRange(this, e, sightRadius))) {
+          this.aiState = 'idle'; this.path = [];
+          this.playAnimation('Idle', true, null);
+        }
+        break;
+      }
+    }
+  }
+
+  _updateMovement(dt, all) {
+    if (this.aiState === 'attack' || this.aiState === 'dead') return;
+    if (this.path.length === 0 || this.pathIndex >= this.path.length) {
+      if (this.aiState === 'idle' && this.path.length === 0) this.playAnimation('Idle', true, null);
+      return;
+    }
+
+    const targetNode = this.path[this.pathIndex];
+    const tx = targetNode.worldX, ty = targetNode.worldY, tz = targetNode.worldZ;
+    const dx = tx - this.position.x, dy = ty - this.position.y, dz = tz - this.position.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+
+    const hpFrac = this.hp / this.stats.maxHp;            // 1.0 → 0.0
+    const hpMult = 0.35 + 0.65 * hpFrac;                 // 0.35 at 0 HP → 1.0 at full HP
+    const speed  = MOVE_SPEED * hpMult * (this.aiState === 'flee' ? 1.5 : 1.0);
+    const step  = speed * dt;
+
+    // Separation nudge
+    const sep = separationForce(this, all);
+
+    if (dist <= step) {
+      this.position.set(tx, ty, tz);
+      this.currentNode = targetNode;
+      this.pathIndex++;
+      if (this.pathIndex >= this.path.length) {
+        this.path = []; this.pathIndex = 0;
+        if (this.aiState === 'idle') this.playAnimation('Idle', true, null);
+      }
+    } else {
+      const inv = 1 / dist;
+      const ndx = dx * inv, ndz = dz * inv;
+      this.position.x += ndx * step + sep.x * dt * 5;
+      this.position.y += (ty - this.position.y) * Math.min(1, dt * 4);
+      this.position.z += ndz * step + sep.z * dt * 5;
+
+      if (this.model) {
+        const look = this.position.clone();
+        look.x += ndx; look.z += ndz;
+        look.y = this.position.y;
+        this.model.lookAt(look);
+      }
+    }
+  }
+}
+
+// Returns the best adjacent node to target for attacker to stand in,
+// preferring nodes not already claimed by another ally.
+function getBestAttackNode(attacker, target, all) {
+  if (!target.currentNode) return null;
+  const adj = target.currentNode.neighbors;
+  if (!adj || adj.length === 0) return null;
+  // Collect nodes already claimed (currentNode) by other living allies
+  const claimed = new Set();
+  for (const e of all) {
+    if (e === attacker || e.aiState === 'dead' || e.faction !== attacker.faction) continue;
+    if (e.currentNode) claimed.add(`${e.currentNode.xi},${e.currentNode.z}`);
+    // Also consider their path destination
+    if (e.path && e.path.length > 0) {
+      const dest = e.path[e.path.length - 1];
+      claimed.add(`${dest.xi},${dest.z}`);
+    }
+  }
+  let best = null, bestDist = Infinity;
+  for (const node of adj) {
+    const key = `${node.xi},${node.z}`;
+    const free = !claimed.has(key);
+    const d = attacker.currentNode
+      ? Math.abs(node.xi - attacker.currentNode.xi) + Math.abs(node.z - attacker.currentNode.z)
+      : Infinity;
+    // Prefer free nodes; among equal prefer closest
+    if (!best || (free && claimed.has(`${best.xi},${best.z}`)) || (free === !claimed.has(`${best.xi},${best.z}`) && d < bestDist)) {
+      best = node; bestDist = d;
+    }
+  }
+  return best;
+}
+
+function isAdjacent(a, b) {
+  if (!a.currentNode || !b.currentNode) return false;
+  return Math.abs(a.currentNode.xi - b.currentNode.xi) + Math.abs(a.currentNode.z - b.currentNode.z) <= 1;
+}
+
+function findFleeNode(entity, enemies) {
+  let best = null, bestScore = -1;
+  for (const [, node] of navGraph.nodes) {
+    let minD = Infinity;
+    for (const e of enemies) {
+      if (e.currentNode) {
+        const d = Math.abs(node.xi - e.currentNode.xi) + Math.abs(node.z - e.currentNode.z);
+        if (d < minD) minD = d;
+      }
+    }
+    if (minD > bestScore) { bestScore = minD; best = node; }
+  }
+  return best;
+}
+
+// ============================================================
+// HP BARS
+// ============================================================
+const hudEl = document.getElementById('hud');
+function createHPBar(entity) {
+  const el = document.createElement('div');
+  el.className = 'hp-bar ' + (entity.faction === 'player' ? 'hp-player' : 'hp-enemy');
+  el.innerHTML = `<div class="hp-name">${entity.name}</div><div class="hp-track"><div class="hp-fill"></div></div>`;
+  hudEl.appendChild(el);
+  entity.hpBarEl = el;
+  updateHPBar(entity);
+}
+function updateHPBar(entity) {
+  const el = entity.hpBarEl;
+  if (!el || !entity.model) return;
+  if (entity.aiState === 'dead') { el.style.display = 'none'; return; }
+  const pos = entity.model.position.clone();
+  pos.y += 3.5;
+  pos.project(camera);
+  if (pos.z >= 1) { el.style.display = 'none'; return; }
+  el.style.display  = 'flex';
+  el.style.left     = `${(pos.x * 0.5 + 0.5) * window.innerWidth}px`;
+  el.style.top      = `${(-pos.y * 0.5 + 0.5) * window.innerHeight}px`;
+  el.querySelector('.hp-fill').style.width = `${entity.hp / entity.stats.maxHp * 100}%`;
+}
+
+// ============================================================
+// DEBUG VISUALIZATION
+// ============================================================
+const dbgGeo  = new THREE.BufferGeometry();
+const dbgMat  = new THREE.LineBasicMaterial({ color: 0x00ff88, depthTest: false, transparent: true, opacity: 0.75 });
+const dbgLines = new THREE.LineSegments(dbgGeo, dbgMat);
+dbgLines.renderOrder = 999;
+scene.add(dbgLines);
+
+let navDotsMesh = null;
+function buildNavDots() {
+  if (navDotsMesh) { scene.remove(navDotsMesh); navDotsMesh.geometry.dispose(); }
+  const pts = [];
+  for (const [, n] of navGraph.nodes) pts.push(n.worldX, n.worldY + 0.25, n.worldZ);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  navDotsMesh = new THREE.Points(g, new THREE.PointsMaterial({ color: 0x4488ff, size: 0.4, depthTest: false }));
+  navDotsMesh.renderOrder = 998;
+  navDotsMesh.visible = debugMode;
+  scene.add(navDotsMesh);
+}
+function updateDebug() {
+  if (navDotsMesh) navDotsMesh.visible = debugMode;
+  if (!debugMode) { dbgLines.visible = false; return; }
+  dbgLines.visible = true;
+  const pts = [];
+  for (const e of entities) {
+    if (e.aiState === 'dead' || !e.model) continue;
+    if (e.path.length > 0 && e.pathIndex < e.path.length) {
+      let px = e.position.x, py = e.position.y + 0.5, pz = e.position.z;
+      for (let i = e.pathIndex; i < e.path.length; i++) {
+        const n = e.path[i];
+        pts.push(px, py, pz, n.worldX, n.worldY + 0.5, n.worldZ);
+        px = n.worldX; py = n.worldY + 0.5; pz = n.worldZ;
+      }
+    }
+    if (e.target && e.target.model) {
+      pts.push(e.position.x, e.position.y+1.5, e.position.z,
+               e.target.position.x, e.target.position.y+1.5, e.target.position.z);
+    }
+  }
+  dbgGeo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+}
+
+// ── debug state labels ─────────────────────────────────────────
+const stateLabelEls = new Map();
+function updateStateLabels() {
+  if (!debugMode) { for (const el of stateLabelEls.values()) el.style.display = 'none'; return; }
+  for (const e of entities) {
+    if (e.aiState === 'dead') continue;
+    let el = stateLabelEls.get(e.id);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'state-label';
+      document.getElementById('hud').appendChild(el);
+      stateLabelEls.set(e.id, el);
+    }
+    if (!e.model) continue;
+    const pos = e.model.position.clone(); pos.y += 4.5; pos.project(camera);
+    if (pos.z >= 1) { el.style.display = 'none'; continue; }
+    el.style.display = 'block';
+    el.style.left = `${(pos.x * 0.5 + 0.5) * window.innerWidth}px`;
+    el.style.top  = `${(-pos.y * 0.5 + 0.5) * window.innerHeight}px`;
+    el.textContent = e.aiState;
+  }
+}
+
+// ============================================================
+// SPAWN
+// ============================================================
+const SPAWN_CONFIGS = [
+  { gltf: 'Wizard.gltf',            tile:[1, 1],  faction:'player', statKey:'wizard', name:'Wizard',   npcType:'seeker'   },
+  { gltf: 'Knight_Male.gltf',        tile:[1, 2],  faction:'player', statKey:'knight', name:'Knight',   npcType:'seeker'   },
+  { gltf: 'Knight_Golden_Male.gltf', tile:[2, 1],  faction:'player', statKey:'knight', name:'Paladin',  npcType:'seeker'   },
+  { gltf: 'Elf.gltf',                tile:[2, 2],  faction:'player', statKey:'elf',    name:'Elf',      npcType:'seeker'   },
+  { gltf: 'Goblin_Male.gltf',        tile:[12, 9], faction:'enemy',  statKey:'goblin', name:'Goblin A', npcType:'wanderer' },
+  { gltf: 'Goblin_Female.gltf',      tile:[12,10], faction:'enemy',  statKey:'goblin', name:'Goblin B', npcType:'wanderer' },
+  { gltf: 'Goblin_Male.gltf',        tile:[13,10], faction:'enemy',  statKey:'goblin', name:'Goblin C', npcType:'wanderer' },
+  { gltf: 'Goblin_Female.gltf',      tile:[13,11], faction:'enemy',  statKey:'goblin', name:'Goblin D', npcType:'wanderer' },
+];
+
+async function spawnAll() {
+  for (const e of entities) {
+    if (e.model) scene.remove(e.model);
+    if (e.hpBarEl) e.hpBarEl.remove();
+  }
+  for (const el of stateLabelEls.values()) el.remove();
+  stateLabelEls.clear();
+  entities.length = 0;
+  entityIdCounter = 0;
+  gameOver = false;
+  combatLog.length = 0;
+  const logEl = document.getElementById('log-content');
+  if (logEl) logEl.innerHTML = '';
+
+  const promises = SPAWN_CONFIGS.map(cfg => spawnOne(cfg));
+  await Promise.all(promises);
+  addLog('Game started — party seeks contact!');
+}
+
+async function spawnOne(cfg) {
+  let gltf = gltfCache.get(cfg.gltf);
+  if (!gltf) {
+    gltf = await loader.loadAsync(GLTF_BASE + cfg.gltf);
+    gltfCache.set(cfg.gltf, gltf);
+  }
+
+  const entity = new CharacterEntity(cfg);
+  const model  = SkeletonUtils.clone(gltf.scene);
+  model.scale.setScalar(charScale);
+  model.traverse(child => { if (child.isMesh) { child.castShadow = true; } });
+
+  const mixer = new THREE.AnimationMixer(model);
+  mixer.addEventListener('finished', () => {
+    if (entity.onAnimFinish) { const cb = entity.onAnimFinish; entity.onAnimFinish = null; cb(); }
+  });
+
+  const anims = {};
+  for (const clip of gltf.animations) anims[clip.name] = mixer.clipAction(clip);
+
+  entity.model      = model;
+  entity.mixer      = mixer;
+  entity.animations = anims;
+
+  const key  = `${cfg.tile[0]},${cfg.tile[1]}`;
+  const node = navGraph.nodes.get(key);
+  if (node) {
+    entity.currentNode = node;
+    entity.position.set(node.worldX, node.worldY, node.worldZ);
+  } else {
+    console.warn(`No nav node for ${cfg.name} at [${cfg.tile}]`);
+    entity.position.set(AXIS_RANGE * cfg.tile[0] / (SIZE-1), FLOOR_SURFACE, AXIS_RANGE * cfg.tile[1] / (SIZE-1));
+  }
+  model.position.copy(entity.position);
+  scene.add(model);
+  createHPBar(entity);
+  entities.push(entity);
+  entity.playAnimation('Idle', true, null);
+  return entity;
+}
+
+// ============================================================
+// KEYBOARD + UI
+// ============================================================
+const pauseOverlay  = document.getElementById('pause-overlay');
+const btnWire       = document.getElementById('btn-wire');
+const btnDebug      = document.getElementById('btn-debug');
+
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    paused = !paused;
+    pauseOverlay.classList.toggle('visible', paused);
+  }
+  if (e.key === 'r' || e.key === 'R') {
+    camera.position.copy(HOME_POS);
+    controls.target.copy(HOME_TARGET);
+    controls.update();
+  }
+  if (e.key === 'w' || e.key === 'W') {
+    dungeonMat.wireframe = !dungeonMat.wireframe;
+    btnWire.classList.toggle('active', dungeonMat.wireframe);
+  }
+  if (e.key === 'd' || e.key === 'D') {
+    debugMode = !debugMode;
+    btnDebug.classList.toggle('active', debugMode);
+  }
+});
+
+btnWire.addEventListener('click', () => {
+  dungeonMat.wireframe = !dungeonMat.wireframe;
+  btnWire.classList.toggle('active', dungeonMat.wireframe);
+});
+btnDebug.addEventListener('click', () => {
+  debugMode = !debugMode;
+  btnDebug.classList.toggle('active', debugMode);
+});
+document.getElementById('btn-spawn').addEventListener('click', () => {
+  paused = false;
+  pauseOverlay.classList.remove('visible');
+  gameOver = false;
+  spawnAll();
+});
+
+function bindSlider(id, valId, divisor, onchange) {
+  const sl = document.getElementById(id);
+  const vl = document.getElementById(valId);
+  sl.addEventListener('input', () => {
+    const v = sl.value / divisor;
+    if (vl) vl.textContent = typeof onchange === 'function' ? onchange(v) : v.toFixed(1);
+    if (typeof onchange === 'function') onchange(v);
+  });
+}
+
+document.getElementById('sl-slope').addEventListener('input', e => {
+  slopeThreshold = parseInt(e.target.value);
+  document.getElementById('v-slope').textContent = slopeThreshold;
+  navGraph = buildNavGraph(slopeThreshold);
+  buildNavDots();
+});
+document.getElementById('sl-sight').addEventListener('input', e => {
+  sightRadius = parseInt(e.target.value);
+  document.getElementById('v-sight').textContent = sightRadius;
+});
+document.getElementById('sl-cspeed').addEventListener('input', e => {
+  combatSpeedMult = e.target.value / 100;
+  document.getElementById('v-cspeed').textContent = combatSpeedMult.toFixed(2) + '×';
+});
+document.getElementById('sl-scale').addEventListener('input', e => {
+  charScale = e.target.value / 10;
+  document.getElementById('v-scale').textContent = charScale.toFixed(1);
+  for (const ent of entities) {
+    if (ent.model) ent.model.scale.setScalar(charScale);
+  }
+});
+
+// ============================================================
+// GAME LOOP
+// ============================================================
+let lastTime = 0;
+let frameCount = 0;
+function animate(now) {
+  requestAnimationFrame(animate);
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+  frameCount++;
+
+  controls.update();
+
+  if (!paused && !gameOver) {
+    for (const e of entities) e.update(dt, entities);
+  }
+
+  updateDebug();
+  for (const e of entities) updateHPBar(e);
+  updateStateLabels();
+
+  const dbgEl = document.getElementById('debug-info');
+  if (dbgEl) {
+    const alive = entities.filter(e => e.aiState !== 'dead');
+    dbgEl.textContent = `Frame ${frameCount} | Entities: ${alive.length}/${entities.length} | NavNodes: ${navGraph?.nodes.size ?? 0} | ${paused ? 'PAUSED' : 'RUNNING'}`;
+  }
+
+  renderer.render(scene, camera);
+}
+
+// ============================================================
+// INIT
+// ============================================================
+(async () => {
+  dbg('Step 7: Building nav graph...');
+  navGraph = buildNavGraph(slopeThreshold);
+  buildNavDots();
+  dbg(`Step 8: Nav graph built (${navGraph.nodes.size} nodes) — starting render loop`);
+  // Start render loop immediately — dungeon mesh is already in the scene
+  requestAnimationFrame(animate);
+  addLog('Loading character models...');
+  try {
+    await spawnAll();
+    dbg('Step 9: All characters loaded');
+  } catch (err) {
+    console.error('Spawn failed:', err);
+    addLog('⚠ Model load error: ' + err.message);
+    showError('Model load error: ' + err.message);
+  }
+})();
+</script>
+</body>
+</html>
